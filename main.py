@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import time
 import uuid
 from typing import Any, Dict, Generator, List, Literal, Optional
@@ -11,9 +12,18 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+if not os.path.exists(".env"):
+    if os.path.exists(".env.example"):
+        shutil.copy(".env.example", ".env")
+        print("Created .env from .env.example")
+    else:
+        print("Warning: No .env or .env.example found")
+
 load_dotenv()
 
-CHAT360_URL = os.getenv("CHAT360_URL", "https://chat.360.com/backend-api/api/common/chat")
+CHAT360_URL = os.getenv(
+    "CHAT360_URL", "https://chat.360.com/backend-api/api/common/chat"
+)
 CHAT360_DELETE_URL_TEMPLATE = os.getenv(
     "CHAT360_DELETE_URL_TEMPLATE",
     "https://chat.360.com/backend-api/api/ai/remove/conversation/{conversation_id}?search_action=",
@@ -23,7 +33,9 @@ CHAT360_ROLE = os.getenv("CHAT360_ROLE", "00000001")
 CHAT360_SOURCE_TYPE = os.getenv("CHAT360_SOURCE_TYPE", "prophet_web")
 CHAT360_IS_SO = os.getenv("CHAT360_IS_SO", "true").lower() == "true"
 CHAT360_TYPE = int(os.getenv("CHAT360_TYPE", "0"))
-CHAT360_AUTO_DELETE_PREVIOUS = os.getenv("CHAT360_AUTO_DELETE_PREVIOUS", "true").lower() == "true"
+CHAT360_AUTO_DELETE_PREVIOUS = (
+    os.getenv("CHAT360_AUTO_DELETE_PREVIOUS", "true").lower() == "true"
+)
 API_KEY = os.getenv("OPENAI_API_KEY", "")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -139,7 +151,9 @@ def make_headers(conversation_id: str) -> Dict[str, str]:
     return headers
 
 
-def parse_sse_lines(response: requests.Response) -> Generator[tuple[Optional[str], str], None, None]:
+def parse_sse_lines(
+    response: requests.Response,
+) -> Generator[tuple[Optional[str], str], None, None]:
     current_event: Optional[str] = None
     data_lines: List[str] = []
 
@@ -213,19 +227,27 @@ def delete_conversation(conversation_id: str, current_conversation_id: str) -> N
     )
     if response.status_code >= 400:
         detail = response.text[:500] if response.text else "request failed"
-        raise HTTPException(status_code=502, detail=f"360 delete conversation failed: {detail}")
+        raise HTTPException(
+            status_code=502, detail=f"360 delete conversation failed: {detail}"
+        )
 
     try:
         payload = response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail="360 delete conversation returned invalid JSON") from exc
+        raise HTTPException(
+            status_code=502, detail="360 delete conversation returned invalid JSON"
+        ) from exc
 
     context = payload.get("context", {})
     if context.get("code") not in (0, None):
-        raise HTTPException(status_code=502, detail=f"360 delete conversation failed: {payload}")
+        raise HTTPException(
+            status_code=502, detail=f"360 delete conversation failed: {payload}"
+        )
 
 
-def cleanup_previous_conversation(previous_conversation_id: str, current_conversation_id: str) -> None:
+def cleanup_previous_conversation(
+    previous_conversation_id: str, current_conversation_id: str
+) -> None:
     if not previous_conversation_id or not current_conversation_id:
         return
     if previous_conversation_id == current_conversation_id:
@@ -275,13 +297,18 @@ def chat_completions(
 
     prompt = build_prompt(request.messages)
     if not prompt:
-        raise HTTPException(status_code=400, detail="messages must contain at least one text content")
+        raise HTTPException(
+            status_code=400, detail="messages must contain at least one text content"
+        )
 
     client_conversation_id = request.conversation_id or str(uuid.uuid4())
-    previous_backend_conversation_id = conversation_map.get(client_conversation_id, request.conversation_id or "")
+    previous_backend_conversation_id = conversation_map.get(
+        client_conversation_id, request.conversation_id or ""
+    )
     backend_conversation_id = previous_backend_conversation_id
 
     if request.stream:
+
         def event_stream() -> Generator[str, None, None]:
             response = post_to_360(prompt, backend_conversation_id)
             message_id: Optional[str] = None
@@ -320,7 +347,9 @@ def chat_completions(
                 }
                 yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
-                cleanup_previous_conversation(previous_backend_conversation_id, latest_backend_conversation_id)
+                cleanup_previous_conversation(
+                    previous_backend_conversation_id, latest_backend_conversation_id
+                )
             finally:
                 response.close()
 
@@ -342,7 +371,9 @@ def chat_completions(
     finally:
         response.close()
 
-    cleanup_previous_conversation(previous_backend_conversation_id, latest_backend_conversation_id)
+    cleanup_previous_conversation(
+        previous_backend_conversation_id, latest_backend_conversation_id
+    )
 
     content = "".join(content_parts)
     prompt_tokens = count_tokens(prompt)
